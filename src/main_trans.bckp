@@ -1,0 +1,159 @@
+#include <Arduino.h>
+/*
+ * ESP8266 Transmitter Code using ESP-NOW (Continuous Mode)
+ * 
+ * Functionality:
+ * - Continuously reads 4 buttons
+ * - Sends current state every cycle (~10ms)
+ * - Perfect for RC applications where continuous updates are needed
+ * - Simple debouncing to filter noise
+ */
+#include <ESP8266WiFi.h>
+#include <espnow.h>
+
+// GPIO pin assignments for ESP8266 NodeMCU/Wemos D1 Mini (more pins available)
+// Using D pins nomenclature
+#define BUTTON1_PIN 0
+#define BUTTON2_PIN 1
+#define BUTTON3_PIN 2
+#define BUTTON4_PIN 3
+
+// MAC Address of the receiver ESP8266 (you'll need to replace this)
+//uint8_t receiverMacAddress[] = {0x84, 0xCC, 0xA8, 0xA1, 0x94, 0xD2}; //84:cc:a8:a1:94:d2
+uint8_t receiverMacAddress[] = {0xA8, 0x48, 0xFA, 0xCD, 0x1A, 0x75}; // wemos: a8:48:fa:cd:1a:75
+
+// Debouncing - simple noise filter
+#define DEBOUNCE_READS 3  // Number of consecutive same readings needed
+#define UPDATE_INTERVAL 10 // Send update every 10ms
+
+// Button state tracking for debouncing
+struct ButtonDebounce {
+  bool lastState;
+  int sameReadings;
+};
+
+ButtonDebounce btn1 = {false, 0};
+ButtonDebounce btn2 = {false, 0};
+ButtonDebounce btn3 = {false, 0};
+ButtonDebounce btn4 = {false, 0};
+
+// Current button states
+bool button1State = false;
+bool button2State = false;
+bool button3State = false;
+bool button4State = false;
+
+// Structure to send data
+// Must match the receiver structure
+typedef struct message {
+  bool button1;
+  bool button2;
+  bool button3;
+  bool button4;
+} message;
+
+// Create a structured object
+message myData;
+
+// Timing for updates
+unsigned long lastUpdateTime = 0;
+
+// Callback when data is sent
+void OnDataSent(uint8_t *mac_addr, uint8_t sendStatus) {
+  // Optional: uncomment for debugging
+  // if (sendStatus != 0) {
+  //   Serial.println("✗ Delivery fail");
+  // }
+}
+
+// Simple debounce function
+bool debouncedRead(int pin, ButtonDebounce &btn) {
+  bool reading = !digitalRead(pin);  // Inverted because of pull-up
+  
+  if (reading == btn.lastState) {
+    // Same reading, increment counter
+    if (btn.sameReadings < DEBOUNCE_READS) {
+      btn.sameReadings++;
+    }
+  } else {
+    // Different reading, reset counter
+    btn.sameReadings = 0;
+    btn.lastState = reading;
+  }
+  
+  // Return stable reading only after consistent reads
+  if (btn.sameReadings >= DEBOUNCE_READS) {
+    return reading;
+  } else {
+    // Return previous stable state
+    return btn.lastState;
+  }
+}
+
+void setup() {
+  // Initialize Serial Monitor
+  Serial.begin(115200);
+  
+  // Set device as a Wi-Fi Station
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  // Initialize buttons as inputs with pull-up resistors
+  pinMode(BUTTON1_PIN, INPUT_PULLUP);
+  pinMode(BUTTON2_PIN, INPUT_PULLUP);
+  pinMode(BUTTON3_PIN, INPUT_PULLUP);
+  pinMode(BUTTON4_PIN, INPUT_PULLUP);
+
+  // Initialize ESP-NOW
+  if (esp_now_init() != 0) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+
+  // Set ESP-NOW role
+  esp_now_set_self_role(ESP_NOW_ROLE_CONTROLLER);
+  
+  // Register peer
+  esp_now_add_peer(receiverMacAddress, ESP_NOW_ROLE_SLAVE, 1, NULL, 0);
+  
+  // Register callback function
+  esp_now_register_send_cb(OnDataSent);
+  
+  Serial.println("Transmitter initialized - Continuous Mode");
+  Serial.println("Sending button states every 10ms");
+}
+
+void loop() {
+  // Read all button states with simple debouncing
+  button1State = debouncedRead(BUTTON1_PIN, btn1);
+  button2State = debouncedRead(BUTTON2_PIN, btn2);
+  button3State = debouncedRead(BUTTON3_PIN, btn3);
+  button4State = debouncedRead(BUTTON4_PIN, btn4);
+  
+  // Send updates at specified interval
+  if (millis() - lastUpdateTime >= UPDATE_INTERVAL) {
+    lastUpdateTime = millis();
+    
+    // Pack all button states into one message
+    myData.button1 = button1State;
+    myData.button2 = button2State;
+    myData.button3 = button3State;
+    myData.button4 = button4State;
+    
+    // Send the message
+    esp_now_send(receiverMacAddress, (uint8_t *)&myData, sizeof(myData));
+    
+    // Optional: Debug output (uncomment if needed)
+    // Serial.print("Sent: B1=");
+    // Serial.print(button1State);
+    // Serial.print(" B2=");
+    // Serial.print(button2State);
+    // Serial.print(" B3=");
+    // Serial.print(button3State);
+    // Serial.print(" B4=");
+    // Serial.println(button4State);
+  }
+  
+  // Small delay for stability
+  delay(1);
+}

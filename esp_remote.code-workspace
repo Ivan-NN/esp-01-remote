@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../projects/esp_remote"
+		},
+		{
+			"name": "esp-01-remote",
+			"path": "."
+		}
+	],
+	"settings": {}
+}

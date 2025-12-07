@@ -7,6 +7,7 @@
  * - Default state: HIGH (pulled up)
  * - When button pressed: Output goes LOW (pulled to ground)
  * - Perfect for RC applications with continuous updates
+ * - SAFETY FEATURE: Auto-releases all outputs if signal is lost
  */
 
 #include <ESP8266WiFi.h>
@@ -14,16 +15,18 @@
 
 // GPIO pin assignments for ESP8266 NodeMCU/Wemos D1 Mini
 // Using D pins nomenclature
-#define OUTPUT1_PIN D1   // GPIO14 for output 1
+#define OUTPUT1_PIN D5   // GPIO14 for output 1
 #define OUTPUT2_PIN D0   // GPIO12 for output 2
-#define OUTPUT3_PIN D5   // GPIO13 for output 3
-#define OUTPUT4_PIN D2   // GPIO15 for output 4
+#define OUTPUT3_PIN D2   // GPIO13 for output 3
+#define OUTPUT4_PIN D1   // GPIO15 for output 4
 
-// Output state tracking
-bool output1State = false;
-bool output2State = false;
-bool output3State = false;
-bool output4State = false;
+// Define PWM behavior
+#define SIGNAL_TIMEOUT 100  // Timeout in milliseconds (if no signal for 100ms, release all outputs)
+                            // With 10ms update rate, 100ms = 10 missed packets (very safe margin)
+
+// Timestamp for signal monitoring
+unsigned long lastSignalTime = 0;
+bool signalLost = false;
 
 // Structure to receive data
 // Must match the transmitter structure
@@ -40,6 +43,17 @@ message myData;
 // Callback function executed when data is received
 void OnDataRecv(uint8_t *mac, uint8_t *incomingData, uint8_t len) {
   memcpy(&myData, incomingData, sizeof(myData));
+  
+  // Update signal timestamp - we received valid data
+  lastSignalTime = millis();
+  
+  // If signal was previously lost, notify recovery
+  if (signalLost) {
+    signalLost = false;
+    if (Serial) {
+      Serial.println("✓ Signal restored!");
+    }
+  }
   
   // INVERTED LOGIC:
   // Button pressed (true) = Output LOW (pulled to ground)
@@ -83,6 +97,9 @@ void setup() {
   digitalWrite(OUTPUT2_PIN, HIGH);
   digitalWrite(OUTPUT3_PIN, HIGH);
   digitalWrite(OUTPUT4_PIN, HIGH);
+  
+  // Initialize signal monitoring
+  lastSignalTime = millis();
 
   // Initialize ESP-NOW
   if (esp_now_init() != 0) {
@@ -104,8 +121,24 @@ void setup() {
 }
 
 void loop() {
-  // The receiver mainly relies on the callback function
-  // You can add additional logic here if needed
+  // Check for signal timeout (no data received for SIGNAL_TIMEOUT ms)
+  if (millis() - lastSignalTime > SIGNAL_TIMEOUT) {
+    // Signal lost - release all outputs to safe state
+    if (!signalLost) {
+      signalLost = true;
+      
+      // Set all outputs to HIGH (released/idle state with inverted logic)
+      digitalWrite(OUTPUT1_PIN, HIGH);
+      digitalWrite(OUTPUT2_PIN, HIGH);
+      digitalWrite(OUTPUT3_PIN, HIGH);
+      digitalWrite(OUTPUT4_PIN, HIGH);
+      
+      // Notify via Serial
+      if (Serial) {
+        Serial.println("⚠ SIGNAL LOST - All outputs released to safe state");
+      }
+    }
+  }
   
   // Small delay for stability
   delay(10);
